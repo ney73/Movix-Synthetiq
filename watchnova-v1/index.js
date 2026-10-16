@@ -95,8 +95,53 @@ function parseCards(html, pageUrl) {
   }
   return results;
 }
+function catalogRecords(data) {
+  var found = [];
+  var seen = {};
+  function walk(node, depth) {
+    if (!node || depth > 5) return;
+    if (Array.isArray(node)) {
+      node.forEach(function (item) { walk(item, depth + 1); });
+      return;
+    }
+    if (typeof node !== "object") return;
+    var title = node.title || node.name || node.nom || node.label || node.original_title || node.originalTitle;
+    var rawHref = node.href || node.url || node.link || node.path || node.slug || node.id;
+    var image = node.image || node.poster || node.poster_path || node.thumbnail || node.cover || node.backdrop;
+    if (title && rawHref) {
+      var href = absoluteUrl(String(rawHref), NOVA_BASE);
+      if (href && /watchnova\.win/i.test(href) && !seen[href]) {
+        seen[href] = true;
+        found.push({
+          title: stripTags(String(title)),
+          href: href,
+          image: image ? absoluteUrl(String(image), NOVA_BASE) : "",
+          id: String(node.id || href.replace(/[?#].*$/, "").replace(/\/$/, "").split("/").pop() || href),
+          description: stripTags(String(node.description || node.overview || node.synopsis || ""))
+        });
+      }
+    }
+    Object.keys(node).forEach(function (key) {
+      if (node[key] && typeof node[key] === "object") walk(node[key], depth + 1);
+    });
+  }
+  walk(data, 0);
+  return found;
+}
+
 globalThis.searchResults = async function (query) {
-  var all = [], seen = {}, q = String(query || "").trim().toLowerCase();
+  var q = String(query || "").trim().toLowerCase();
+  var apiResponse = await getPage(NOVA_BASE + "/api/catalog");
+  if (apiResponse) {
+    try {
+      var data = JSON.parse(apiResponse);
+      var apiItems = catalogRecords(data).filter(function (item) {
+        return !q || item.title.toLowerCase().indexOf(q) !== -1;
+      });
+      if (apiItems.length) return apiItems.slice(0, 30);
+    } catch (_) {}
+  }
+  var all = [], seen = {};
   for (var i = 0; i < NOVA_CATALOGUES.length; i++) {
     var html = await getPage(NOVA_CATALOGUES[i]);
     if (!html) continue;
@@ -110,6 +155,7 @@ globalThis.searchResults = async function (query) {
   }
   return all.slice(0, 30);
 };
+
 globalThis.extractDetails = async function (urlOrId) {
   var input = String(urlOrId || "").trim();
   var href = /^https?:\/\//i.test(input) ? input : "";
